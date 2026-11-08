@@ -1,0 +1,97 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxrender-dev libgl1-mesa-dev xvfb openbox
+
+      # Optional: if the Steinberg ASIO SDK can be downloaded, the Windows standalone app gets ASIO.
+      # Without it the app still works through WASAPI (Windows Audio / Exclusive / Low Latency).
+      - name: Fetch ASIO SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        continue-on-error: true
+        run: |
+          curl -sSfL -o asiosdk.zip https://www.steinberg.net/asiosdk
+          unzip -q asiosdk.zip -d asiosdk
+          header=$(find "$PWD/asiosdk" -path '*common/asio.h' | head -1)
+          test -n "$header"
+          echo "ASIO_FLAG=-DRIFFFORGE_ASIO_SDK_DIR=$(cygpath -m "$(dirname "$(dirname "$header")")")" >> "$GITHUB_ENV"
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${ASIO_FLAG:-}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a ./build/RiffForgeRenderTest_artefacts/Release/RiffForgeRenderTest render-output
+          cd build/RiffForge_artefacts/Release
+          xvfb-run -a bash -c 'openbox & sleep 1; ../../RiffForgeHostTest_artefacts/Release/RiffForgeHostTest VST3/RiffForge.vst3 LV2/RiffForge.lv2'
+
+      - name: Test (Windows / macOS)
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          exe=build/RiffForgeRenderTest_artefacts/Release/RiffForgeRenderTest
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          "$exe" render-output
+          host=build/RiffForgeHostTest_artefacts/Release/RiffForgeHostTest
+          [ -f "$host.exe" ] && host="$host.exe"
+          "$host" build/RiffForge_artefacts/Release/VST3/RiffForge.vst3
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd build/RiffForge_artefacts/Release
+          case "${{ runner.os }}" in
+            Windows)
+              7z a "$GITHUB_WORKSPACE/dist/RiffForge-Windows.zip" VST3/RiffForge.vst3 Standalone/RiffForge.exe ;;
+            macOS)
+              mkdir -p pkg && cp -R VST3/RiffForge.vst3 AU/RiffForge.component Standalone/RiffForge.app pkg/
+              ditto -c -k --keepParent pkg "$GITHUB_WORKSPACE/dist/RiffForge-macOS.zip" ;;
+            Linux)
+              zip -qry "$GITHUB_WORKSPACE/dist/RiffForge-Linux.zip" VST3/RiffForge.vst3 LV2/RiffForge.lv2 Standalone/RiffForge ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiffForge-${{ matrix.name }}
+          path: dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-renders-${{ matrix.name }}
+          path: render-output
+          if-no-files-found: ignore

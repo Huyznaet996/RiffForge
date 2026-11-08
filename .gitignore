@@ -1,0 +1,12 @@
+build/
+build-*/
+cmake-build-*/
+render-output/
+asiosdk/
+asiosdk.zip
+dist/
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
