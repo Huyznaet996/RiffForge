@@ -21,7 +21,7 @@ jobs:
             os: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -84,12 +84,14 @@ jobs:
               zip -qry "$GITHUB_WORKSPACE/dist/RiffForge-Linux.zip" VST3/RiffForge.vst3 LV2/RiffForge.lv2 Standalone/RiffForge ;;
           esac
 
-      - uses: actions/upload-artifact@v4
+      # Upload the zip as-is (no zip-inside-a-zip; keeps macOS bundle permissions).
+      # The artifact is named after the file: RiffForge-Windows.zip / -macOS.zip / -Linux.zip
+      - uses: actions/upload-artifact@v7
         with:
-          name: RiffForge-${{ matrix.name }}
-          path: dist/*.zip
+          path: dist/RiffForge-${{ matrix.name }}.zip
+          archive: false
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-renders-${{ matrix.name }}
